@@ -146,13 +146,18 @@ navigator.credentials.get = async function(options) {
 navigator.credentials.create = async function(options) {
     console.log("navigator.credentials.create", options)
     try {
+        if (!confirm("Creating new credential on userWebAuthn. Continue?")) {
+            throw new Error('user cancel');
+        }
         const authOptions = { publicKey: Object.assign({}, options.publicKey) };
         authOptions.publicKey.challenge = abb64(authOptions.publicKey.challenge)
         authOptions.publicKey.user = Object.assign({}, options.publicKey.user)
         authOptions.publicKey.user.id = abb64(authOptions.publicKey.user.id)
-        authOptions.publicKey.excludeCredentials = authOptions.publicKey.excludeCredentials.map(credential => ({
-            ...credential, id: abb64(credential.id)
-        }));
+        if (authOptions.publicKey.excludeCredentials) {
+            authOptions.publicKey.excludeCredentials = authOptions.publicKey.excludeCredentials.map(credential => ({
+                ...credential, id: abb64(credential.id)
+            }));
+        }
         const response = await myFetch('http://127.0.0.1:20492', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
