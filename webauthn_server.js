@@ -56,6 +56,43 @@ function myFetch(url, options = {}) {
   });
 }
 
+function showCredentialSelectionPopup(credentials) {
+    return new Promise((resolve) => {
+        const popup = document.createElement("div");
+        popup.style.position = "fixed";
+        popup.style.top = "20px";
+        popup.style.right = "20px";
+        popup.style.backgroundColor = "#fff";
+        popup.style.color = "#000";
+        popup.style.border = "1px solid #bbb";
+        popup.style.borderRadius = "5px";
+        popup.style.padding = "15px";
+        popup.style.zIndex = "9999";
+        popup.style.maxWidth = "300px";
+        
+        const title = document.createElement("h3");
+        title.textContent = "Select credential";
+        title.style.margin = "0 0 10px 0";
+        popup.appendChild(title);
+        
+        credentials.forEach((cred, index) => {
+            const option = document.createElement("div");
+            option.style.padding = "8px 10px";
+            option.style.cursor = "pointer";
+            const createdDate = new Date(cred.created * 1000).toLocaleString();
+            option.innerHTML = `
+                <strong>${cred.username || 'Unknown user'}</strong>
+                <div style="font-size: 0.8em; color: #666;">Created: ${createdDate}</div>
+            `; 
+            option.addEventListener("mouseover", () => { option.style.backgroundColor = "#f0f0f0"; });
+            option.addEventListener("mouseout", () => { option.style.backgroundColor = "transparent"; });    
+            option.addEventListener("click", () => { document.body.removeChild(popup); resolve(cred); });
+            popup.appendChild(option);
+        });
+        document.body.appendChild(popup);
+    });
+}
+
 const origGet = navigator.credentials.get;
 const origCreate = navigator.credentials.create;
 
@@ -79,19 +116,23 @@ navigator.credentials.get = async function(options) {
         if (!response.ok) throw new Error(`server error: ${response.status}`)
         const resp = await response.json()
         console.log("server response:", resp)
+        let cred = resp;
+        if (Array.isArray(resp) && resp.length > 0) {
+            cred = await showCredentialSelectionPopup(resp);
+        }
         const credential = {
-            id: resp.id,
-            type: resp.type,
-            rawId: b64ab(resp.rawId),
+            id: cred.id,
+            type: cred.type,
+            rawId: b64ab(cred.rawId),
             response: {
-                authenticatorData: b64ab(resp.response.authenticatorData),
-                clientDataJSON: b64ab(resp.response.clientDataJSON),
-                signature: b64ab(resp.response.signature)
+                authenticatorData: b64ab(cred.response.authenticatorData),
+                clientDataJSON: b64ab(cred.response.clientDataJSON),
+                signature: b64ab(cred.response.signature)
             },
             getClientExtensionResults: () => { return {} }
         }
-        if (resp.response.userHandle) {
-            credential.response.userHandle = b64ab(resp.response.userHandle);
+        if (cred.response.userHandle) {
+            credential.response.userHandle = b64ab(cred.response.userHandle);
         }
         console.log(credential)
         return credential;

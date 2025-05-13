@@ -313,6 +313,7 @@ class VirtualFidoDevice:
 
         allowed_credential = data.get("allowCredentials")
         cred = None
+        
         if allowed_credential:
             for credential in allowed_credential:
                 credential_id_b64 = credential["id"]
@@ -320,10 +321,22 @@ class VirtualFidoDevice:
                     cred = self.credentials[credential_id_b64]
                     break
         else:
-            for credential_id_b64, my_credential in self.credentials.items():
-                if my_credential["rp_id"] == rp_id.decode():
-                    cred = my_credential
-                    break
+            match_creds = []
+            for cid, cr in self.credentials.items():
+                if cr["rp_id"] == rp_id.decode():
+                    match_creds.append(cid)
+
+            if len(match_creds) == 1:
+                cred = self.credentials[cid]
+
+            else:
+                results = []
+                for cr in match_creds:
+                    current = data.copy()
+                    current["allowCredentials"] = [{"id": cr}]
+                    results.append(self.get(current, origin))
+                return results
+
         if not cred:
             raise self.CredNotFoundError()
         
@@ -360,7 +373,9 @@ class VirtualFidoDevice:
                 "signature": self._b64url(signature),
                 "userHandle": cred["user_id"]
             },
-            "type": "public-key"
+            "type": "public-key",
+            "username": cred["user_name"],
+            "created": cred["created"]
         }
         return response
 
