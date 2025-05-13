@@ -10,7 +10,6 @@ from Crypto.Signature import DSS
 from Crypto.Hash import SHA256
 from typing import Dict, Any, Optional
 
-
 import getpass
 from fido2.hid import CtapHidDevice
 from fido2.client import Fido2Client, UserInteraction
@@ -18,8 +17,8 @@ from fido2.webauthn import PublicKeyCredentialCreationOptions, PublicKeyCredenti
 from fido2.utils import websafe_encode, websafe_decode
 
 
-class YkFidoDevice:
-    def __init__(self):
+class PhysicalPasskey:
+    def __init__(self, dummy = ""):
         devices = list(CtapHidDevice.list_devices())
         if not devices:
             raise Exception("No FIDO2 devices found.")
@@ -139,8 +138,8 @@ class YkFidoDevice:
         return result
 
 
-class VirtualFidoDevice:
-    def __init__(self, file: str = "fido.json"):
+class VirtualPasskey:
+    def __init__(self, file: str = "passkey.json"):
         self.file = file
         self.credentials = {}
         self._load_credentials()
@@ -158,7 +157,7 @@ class VirtualFidoDevice:
             try:
                 with open(self.file, 'r') as f:
                     self.credentials = json.load(f)
-            except FileNotFoundError:
+            except os.FileNotExistsError:
                 self.credentials = {}    
     
     def _save_credentials(self):
@@ -223,7 +222,7 @@ class VirtualFidoDevice:
             if not origin:
                 raise self.InputDataError("origin")
             
-        rp_id = rp.get("id", "").encode()
+        rp_id = rp.get("id").encode()
         
         user_id = user.get("id")
         if isinstance(user_id, str):
@@ -245,34 +244,25 @@ class VirtualFidoDevice:
         
         auth_data = self._create_authenticator_data(rp_id, counter=0, credential_data=attested_data)
 
-        client_data = ('{"type":"%s","challenge":"%s","origin":"%s","crossOrigin":false}' 
-                        % ("webauthn.create", self._b64url(challenge), origin)).encode()
-        client_data_hash = hashlib.sha256(client_data).digest()
-
-        signature_data = auth_data + client_data_hash
-        
-        h = SHA256.new(signature_data)
-        signer = DSS.new(key, 'fips-186-3', encoding='der')
-        signature = signer.sign(h)
-        
-        # Self Attestation
-        attn_fmt  = "packed"
-        attn_stmt = {
-            "alg": -7,
-            "sig": signature
+        attestation_obj = {
+            "fmt": "none",
+            "authData": auth_data,
+            "attStmt": {}
         }
+        attestation_cbor = cbor2.dumps(attestation_obj)
 
-        attn_obj = {
-            "fmt": attn_fmt,
-            "attStmt": attn_stmt,
-            "authData": auth_data
-        }
-        attn_cbor = cbor2.dumps(attn_obj)
+        client_data = {
+                    "challenge": self._b64url(challenge),
+                    "origin": origin,
+                    "type": "webauthn.create",
+                    "crossOrigin": False,
+                }
 
+        client_data_json = json.dumps(client_data).encode()
         
         self.credentials[credential_id_b64] = {
             "private_key": private_key,
-            "rp_id": rp_id.decode(),
+            "rp_id": self._b64url(rp_id),
             "user_id": self._b64url(user_id),
             "user_name": user.get('displayName', ''),
             "created": int(time.time()),
@@ -285,12 +275,11 @@ class VirtualFidoDevice:
             "id": credential_id_b64,
             "rawId": credential_id_b64,
             "response": {
-                "attestationObject": self._b64url(attn_cbor),
-                "clientDataJSON": self._b64url(client_data),
+                "attestationObject": self._b64url(attestation_cbor),
+                "clientDataJSON": self._b64url(client_data_json),
                 "publicKey": self._b64url(cose_pubkey),
-                "authenticatorData": self._b64url(auth_data),
                 "pubKeyAlgo": str(alg),
-                "transports": ["usb"]
+                "transports": ["internal"]
             },
             "type": "public-key"
         }
@@ -298,47 +287,29 @@ class VirtualFidoDevice:
 
 
     def get(self, data: Dict[str, Any], origin: str = "") -> Dict[str, Any]:
+        
         challenge = data.get("challenge")
         if isinstance(challenge, str):
             challenge = self._b64url(challenge)
         
+        allowed_credential = data.get("allowCredentials")
+
+        for credential in allowed_credential:
+            credential_id_b64 = credential["id"]
+            if self.credentials.get(credential_id_b64):
+                cred = self.credentials[credential_id_b64]
+                break
+        else:
+            raise self.CredNotFoundError()
+
         rp_id = data.get("rpId", "").encode('utf-8')
         if not rp_id:
             raise self.InputDataError("rp_id")
-
+        
         if not origin:
             origin = data.get("origin")
             if not origin:
                 raise self.InputDataError("origin")
-
-        allowed_credential = data.get("allowCredentials")
-        cred = None
-        
-        if allowed_credential:
-            for credential in allowed_credential:
-                credential_id_b64 = credential["id"]
-                if self.credentials.get(credential_id_b64):
-                    cred = self.credentials[credential_id_b64]
-                    break
-        else:
-            match_creds = []
-            for cid, cr in self.credentials.items():
-                if cr["rp_id"] == rp_id.decode():
-                    match_creds.append(cid)
-
-            if len(match_creds) == 1:
-                cred = self.credentials[cid]
-
-            else:
-                results = []
-                for cr in match_creds:
-                    current = data.copy()
-                    current["allowCredentials"] = [{"id": cr}]
-                    results.append(self.get(current, origin))
-                return results
-
-        if not cred:
-            raise self.CredNotFoundError()
         
         counter = cred.get("counter", 0) + 1
         cred["counter"] = counter
@@ -370,21 +341,21 @@ class VirtualFidoDevice:
             "response": {
                 "authenticatorData": self._b64url(auth_data),
                 "clientDataJSON": self._b64url(client_data),
-                "signature": self._b64url(signature),
-                "userHandle": cred["user_id"]
+                "signature": self._b64url(signature)
             },
-            "type": "public-key",
-            "username": cred["user_name"],
-            "created": cred["created"]
+            "type": "public-key"
         }
         return response
+
+
+Passkey = VirtualPasskey
 
 
 if __name__=="__main__":
     import requests
 
     sess = requests.Session()
-    fido = VirtualFidoDevice()
+    passkey = Passkey()
 
     payload = {
         "algorithms": ["es256"], "attachment": "all", "attestation": "none", "discoverable_credential": "preferred",
@@ -392,7 +363,7 @@ if __name__=="__main__":
     }
     resp = sess.post("https://webauthn.io/registration/options", json=payload)
     print(resp.json())
-    data = fido.create(resp.json(), origin="https://webauthn.io")
+    data = passkey.create(resp.json(), origin="https://webauthn.io")
     data["rawId"] = data["id"]
     print(data)
     resp = sess.post("https://webauthn.io/registration/verification", json={"response": data, "username": "asdf"})
@@ -404,7 +375,7 @@ if __name__=="__main__":
     payload = {"username":"asdf", "user_verification":"preferred", "hints":[]}
     resp = sess.post("https://webauthn.io/authentication/options", json=payload, headers={"origin": "https://webauthn.io"})
     print(resp.json())
-    data = fido.get(resp.json(), origin="https://webauthn.io")
+    data = passkey.get(resp.json(), origin="https://webauthn.io")
     print(data)
     data["rawId"] = data["id"]
     resp = sess.post("https://webauthn.io/authentication/verification", json={"response": data, "username": "asdf"})

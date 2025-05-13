@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from typing import Dict, Any
 import uvicorn
 import json
-from fido import VirtualFidoDevice as FidoDevice
+from passkey import VirtualPasskey as Passkey
 
 app = FastAPI()
 
@@ -26,7 +26,7 @@ async def handle(param: WebAuthnRequest):
         try:
             options = param.data.get("publicKey", {})
             print(f"webauthn.get {json.dumps(options, indent=4)}")
-            webauthn = FidoDevice()
+            webauthn = Passkey()
             assertion = webauthn.get(options, param.data.get("origin", ""))
             return assertion
 
@@ -40,7 +40,7 @@ async def handle(param: WebAuthnRequest):
         try:
             options = param.data.get("publicKey", {})
             print(f"webauthn.create {json.dumps(options, indent=4)}")
-            webauthn = FidoDevice()
+            webauthn = Passkey()
             attestation = webauthn.create(options, param.data.get("origin", ""))
             return attestation
 
