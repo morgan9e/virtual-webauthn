@@ -1,2 +1,3 @@
-*.json
-__pycache__/*
+passkey.json
+__pycache__/
+dist/
