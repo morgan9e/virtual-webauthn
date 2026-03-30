@@ -1,0 +1,9 @@
+{
+  "name": "com.example.virtual_webauthn",
+  "description": "Virtual WebAuthn Native Messaging Host",
+  "path": "/PLACEHOLDER/virtual-webauthn",
+  "type": "stdio",
+  "allowed_extensions": [
+    "virtual-webauthn@local"
+  ]
+}

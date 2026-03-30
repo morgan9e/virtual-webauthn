@@ -3,9 +3,14 @@
   "name": "Virtual WebAuthn",
   "version": "1.0",
   "description": "Not your keys, not your credential",
-  "host_permissions": [
-    "http://127.0.0.1:20492/*"
+  "permissions": [
+    "nativeMessaging"
   ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "virtual-webauthn@local"
+    }
+  },
   "action": {
     "default_icon": "icon-red.svg",
     "default_title": "Virtual WebAuthn — Disconnected"

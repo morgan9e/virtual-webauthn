@@ -18,33 +18,20 @@
         return bytes.buffer;
     }
 
-    const STYLE = {
-        popup: {
-            position: "fixed", top: "20px", right: "20px",
-            background: "#fff", color: "#000", border: "1px solid #bbb",
-            borderRadius: "8px", padding: "16px", zIndex: "2147483647",
-            maxWidth: "320px", boxShadow: "0 4px 16px rgba(0,0,0,.18)",
-            fontFamily: "system-ui, -apple-system, sans-serif",
-            fontSize: "14px", lineHeight: "1.4",
-        },
-        title: {
-            margin: "0 0 12px", fontSize: "15px", fontWeight: "600",
-        },
-        option: {
-            padding: "10px 12px", cursor: "pointer", borderRadius: "6px",
-            transition: "background .1s",
-        },
+    // --- UI (toast + credential selector only, no password) ---
+
+    const POPUP_STYLE = {
+        position: "fixed", top: "20px", right: "20px",
+        background: "#fff", color: "#000", border: "1px solid #bbb",
+        borderRadius: "8px", padding: "16px", zIndex: "2147483647",
+        maxWidth: "320px", boxShadow: "0 4px 16px rgba(0,0,0,.18)",
+        fontFamily: "system-ui, -apple-system, sans-serif",
+        fontSize: "14px", lineHeight: "1.4",
     };
 
-    function createPopup() {
-        const el = document.createElement("div");
-        Object.assign(el.style, STYLE.popup);
-        return el;
-    }
-
     function showToast(message) {
-        const toast = createPopup();
-        Object.assign(toast.style, { padding: "12px 16px", cursor: "default" });
+        const toast = document.createElement("div");
+        Object.assign(toast.style, { ...POPUP_STYLE, padding: "12px 16px", cursor: "default" });
         toast.innerHTML =
             `<div style="display:flex;align-items:center;gap:8px">` +
             `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#555" stroke-width="2">` +
@@ -57,19 +44,22 @@
 
     function showCredentialSelector(credentials) {
         return new Promise((resolve) => {
-            const popup = createPopup();
+            const popup = document.createElement("div");
+            Object.assign(popup.style, POPUP_STYLE);
 
             const title = document.createElement("div");
             title.textContent = "Select a passkey";
-            Object.assign(title.style, STYLE.title);
+            Object.assign(title.style, { margin: "0 0 12px", fontSize: "15px", fontWeight: "600" });
             popup.appendChild(title);
+
+            const optStyle = { padding: "10px 12px", cursor: "pointer", borderRadius: "6px", transition: "background .1s" };
 
             credentials.forEach((cred) => {
                 const opt = document.createElement("div");
-                Object.assign(opt.style, STYLE.option);
+                Object.assign(opt.style, optStyle);
                 const date = new Date(cred.created * 1000).toLocaleString();
                 opt.innerHTML =
-                    `<strong>${cred.username || "Unknown"}</strong>` +
+                    `<strong>${cred.user_name || "Unknown"}</strong>` +
                     `<div style="font-size:.8em;color:#666;margin-top:2px">${date}</div>`;
                 opt.onmouseover = () => (opt.style.background = "#f0f0f0");
                 opt.onmouseout = () => (opt.style.background = "transparent");
@@ -79,7 +69,7 @@
 
             const cancel = document.createElement("div");
             Object.assign(cancel.style, {
-                ...STYLE.option, textAlign: "center", color: "#888",
+                ...optStyle, textAlign: "center", color: "#888",
                 marginTop: "4px", borderTop: "1px solid #eee", paddingTop: "10px",
             });
             cancel.textContent = "Cancel";
@@ -91,6 +81,8 @@
             document.body.appendChild(popup);
         });
     }
+
+    // --- Messaging (no password in postMessage) ---
 
     const pending = new Map();
     let seq = 0;
@@ -121,8 +113,49 @@
         });
     }
 
+    // --- Response builders ---
+
+    function buildCreateResponse(resp) {
+        return {
+            id: resp.id,
+            type: resp.type,
+            rawId: fromB64url(resp.rawId),
+            authenticatorAttachment: resp.authenticatorAttachment,
+            response: {
+                attestationObject: fromB64url(resp.response.attestationObject),
+                clientDataJSON: fromB64url(resp.response.clientDataJSON),
+                getAuthenticatorData: () => fromB64url(resp.response.authenticatorData),
+                getPublicKey: () => fromB64url(resp.response.publicKey),
+                getPublicKeyAlgorithm: () => Number(resp.response.pubKeyAlgo),
+                getTransports: () => resp.response.transports,
+            },
+            getClientExtensionResults: () => ({}),
+        };
+    }
+
+    function buildGetResponse(resp) {
+        const cred = {
+            id: resp.id,
+            type: resp.type,
+            rawId: fromB64url(resp.rawId),
+            authenticatorAttachment: resp.authenticatorAttachment,
+            response: {
+                authenticatorData: fromB64url(resp.response.authenticatorData),
+                clientDataJSON: fromB64url(resp.response.clientDataJSON),
+                signature: fromB64url(resp.response.signature),
+            },
+            getClientExtensionResults: () => ({}),
+        };
+        if (resp.response.userHandle) {
+            cred.response.userHandle = fromB64url(resp.response.userHandle);
+        }
+        return cred;
+    }
+
+    // --- WebAuthn overrides ---
+
     navigator.credentials.create = async function (options) {
-        const toast = showToast("Waiting for passkey...");
+        const toast = showToast("Creating passkey...");
         try {
             const pk = options.publicKey;
             const resp = await request("create", {
@@ -134,22 +167,7 @@
                 },
                 origin: location.origin,
             });
-
-            return {
-                id: resp.id,
-                type: resp.type,
-                rawId: fromB64url(resp.rawId),
-                authenticatorAttachment: resp.authenticatorAttachment,
-                response: {
-                    attestationObject: fromB64url(resp.response.attestationObject),
-                    clientDataJSON: fromB64url(resp.response.clientDataJSON),
-                    getAuthenticatorData: () => fromB64url(resp.response.authenticatorData),
-                    getPublicKey: () => fromB64url(resp.response.publicKey),
-                    getPublicKeyAlgorithm: () => Number(resp.response.pubKeyAlgo),
-                    getTransports: () => resp.response.transports,
-                },
-                getClientExtensionResults: () => ({}),
-            };
+            return buildCreateResponse(resp);
         } catch (err) {
             console.warn("[VirtualWebAuthn] create fallback:", err.message);
             return origCreate(options);
@@ -159,9 +177,20 @@
     };
 
     navigator.credentials.get = async function (options) {
-        const toast = showToast("Waiting for passkey...");
+        const pk = options.publicKey;
+
+        // Check if we have credentials for this rpId (no auth needed)
         try {
-            const pk = options.publicKey;
+            const creds = await request("list", { rpId: pk.rpId || "" });
+            if (Array.isArray(creds) && creds.length === 0) {
+                return origGet(options);
+            }
+        } catch {
+            return origGet(options);
+        }
+
+        const toast = showToast("Authenticating...");
+        try {
             let resp = await request("get", {
                 publicKey: {
                     ...pk,
@@ -178,22 +207,7 @@
                 if (!resp) throw new Error("User cancelled");
             }
 
-            const cred = {
-                id: resp.id,
-                type: resp.type,
-                rawId: fromB64url(resp.rawId),
-                authenticatorAttachment: resp.authenticatorAttachment,
-                response: {
-                    authenticatorData: fromB64url(resp.response.authenticatorData),
-                    clientDataJSON: fromB64url(resp.response.clientDataJSON),
-                    signature: fromB64url(resp.response.signature),
-                },
-                getClientExtensionResults: () => ({}),
-            };
-            if (resp.response.userHandle) {
-                cred.response.userHandle = fromB64url(resp.response.userHandle);
-            }
-            return cred;
+            return buildGetResponse(resp);
         } catch (err) {
             console.warn("[VirtualWebAuthn] get fallback:", err.message);
             return origGet(options);

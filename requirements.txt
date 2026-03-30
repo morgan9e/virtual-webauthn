@@ -1,5 +1,0 @@
-cbor2
-pycryptodome
-fido2
-fastapi
-uvicorn
